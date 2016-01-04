@@ -1,0 +1,567 @@
+---
+title: "Titanic Project"
+author: "Stephanie Oliva"
+date: "December 5, 2015"
+output: html_document
+---
+The following details the creation of a logistic regression model to predict passenger survival after the devastating shipwreck of the RMS Titanic on April 15, 1912.
+
+```{r}
+train <- read.csv("/Users/Steph/Documents/STAT408/Titanic/train.csv")
+train1 <- read.csv("/Users/Steph/Documents/STAT408/Titanic/train.csv", na.strings=c("NA", "NULL"))
+test <- read.csv("/Users/Steph/Documents/STAT408/Titanic/test.csv", na.strings=c("NA", "NULL"))
+```
+
+
+**Data Summary**
+```{r}
+str(train1)
+train1$Pclass <- as.factor(train1$Pclass)
+```
+The train1 dataset has 891 observations and 12 variables: PassengerId, Survived, Pclass (Passenger Class), Name, Sex, Age, SibSp (Sibling and Spousal relationships), Parch (Parent and Child relationships), Ticket number, Fare, Cabin, and Embarked. Note that Pclass is entered as an integer; it should be converted to a factor. 
+
+```{r}
+summary(train1)
+```
+
+Observations from the summary output:
+
+**Survived:** skewed, clearly showing that the majority of passengers did not survive (0).
+**Pclass:** 3 levels (1, 2, 3), the majority being in 3rd class.
+**Name:** includes title and nicknames in addition to first and last names.
+**Age:** average age is late 20s, however there are 177 missing values.
+**Parch:** not very many Parent/Child relationships were documented.
+**Fare:** large range 0 to 512.33, right-skewed with a mean of 32.2. It is unclear why Fare would have a value of 0, this should be reviewed. 
+**Cabin:** a large number of missing values.
+**Embarked:** uneven distribution of passengers embarking across the 3 ports.
+
+```{r}
+plot(train1)
+```
+
+In logistic regression overlap among response and predictor variables is necessary to avoid complete or quasi-complete separation. This separation indicates that a predictor or set of predictors separates the observations almost entirely into 0 and 1. This should be avoided because while it sounds beneficial, it is unlikely to be representative of the greater population. From the scatter plot matrix, Cabin, Ticket, Name, and PassengerId appear to have a sufficient overlap regarding survival (0 and 1). These are also variables that will likely not be used. Given the amount of information presented in this matrix, an in-depth look at the other variables is required. 
+
+```{r}
+boxplot(as.integer(Pclass)~Survived, data=train1, main="Passenger Class")
+```
+
+From the Pclass boxplot it can be determined that not surprisingly an overwhelming number of first class passengers survived, versus second and third class.
+
+```{r}
+boxplot(Age~Survived, data=train1, main="Age")
+```
+
+There is quite a lot of overlap between survival rates for passengers by age. Intrinsically, given the "women and children first" policy, it would seem that age, specifically a lower age would be seen in the survival plot, though that does not seem to be the case. This might be due to the large amount of missing age values present in the dataset.
+
+```{r}
+boxplot(SibSp~Survived, data=train1, main="Sibling/Spouse")
+```
+
+The SibSp boxplot shows almost identical overlap.
+
+```{r}
+boxplot(Parch~Survived, data=train1, main="Parent/Child")
+```
+
+From the outliers, it seems passengers with Parent/Child relationships greater than 1 were not as likely to survive. 
+
+```{r}
+boxplot(Fare~Survived, data=train1, main="Fare")
+summary(train1$Fare)
+subset(train1, Fare == 0)
+```
+The outlier that paid over $500 in fare survived. There is overlap by fare type in the number of passengers that survived with those that did not. There are 15 such instances, from a variety of classes and ages, including a Jonkheer, which is a Dutch honorific of nobility. It is unlikely that these fares were not paid. Assuming they were not paid by other passengers, the fare could be populated using the average fare paid by class. 
+
+Proportion tables can be created to understand survival based on sex and embarkation.
+```{r}
+prop.table(table(train1$Sex, train1$Survived),1)
+```
+A greater proportion of women survived compared to men, as expected. 
+
+```{r}
+prop.table(table(train1$Embarked, train1$Survived),1)
+```
+An almost even number of passengers that embarked at Cherbourg survived, whereas the majority of passengers that embarked at Queenstown and Southampton did not survive. This could be related to passenger class. 
+
+Given the overview above, a possible model could be created with Age, Pclass, Parch, Sex, and Embarked. While Name may not be helpful in its current state, the title could be extracted to determine if that would assist in identifying survivors, since first class passengers would have titles fitting their social status. If including Fare, mean values could be calculated to replace 0. Lastly, to include Age in the model, the missing values would have to be identified, possibly through the creation of a predictive linear regression model, using the other variables in the dataset.  
+
+**Manipulating Name**
+```{r}
+library(stringr)
+train1$title <- str_sub(train1$Name, str_locate(train1$Name, ",")[ , 1] + 2, str_locate(train1$Name, "\\.")[ , 1] - 1)
+table(train1$title)
+prop.table(table(train1$title, train1$Survived),1)
+```
+
+From the  table above, there are 17 different titles. It appears a greater number of passengers with the title: Mrs, Ms, Miss, Master, Lady, Countess, Mme, and Mlle survived. Given the many levels, it would be beneficial to reclassify the variables, keeping nobility (i.e. titles indicating higher social status) together, and combining Miss and Ms.
+
+```{r}
+noble <- c("Capt", "Col", "Don", "Dr", "Jonkheer", "Major", "Rev", "Sir", "Lady", "Mlle", "Mme", "the Countess")
+train1$title[train1$title %in% noble] <- "noble"
+Ms<- c("Ms", "Miss")
+train1$title[train1$title %in% Ms] <- "Miss"
+train1$title <- as.factor(train1$title)
+```
+
+**Manipulating Fare**
+
+In addition to reclassifying and creating the Title variable, zero fares could be replaced with the median values of fares by passenger class. The median would be used over the mean because it is a more robust measure, particularly considering this skewed dataset. 
+```{r}
+summary(train1$Fare)
+aggregate(Fare~Pclass,train1,median)
+train1$Fare <- ifelse( (round(train1$Fare==0) & as.numeric(train1$Pclass)==1),60.2875,
+                    ifelse( (round(train1$Fare==0) & as.numeric(train1$Pclass)==2),14.25,
+                            ifelse( (round(train1$Fare==0) & as.numeric(train1$Pclass)==3),8.05,train1$Fare)))
+summary(train1$Fare)
+```
+
+**Predicting Age**
+
+Since it appears appropriate to include age in the model, a method must be devised to predict the age values. There are multiple ways to do this, including creating a prediction model, imputing values, or assigning the mean value of age (29.7) to all the missing values. In this project, a prediction linear regression model will be created.
+
+The First step is to create a dataset with all the known age values.
+```{r}
+knownAge <- train1[which(train1$Age != ""),]
+```
+
+Next, a model can be fit with each of the predictors against Age, to see which variables are significant. Ticket and Name will not be included, given the many levels in these variables. Survived will also not be included because it is not a variable in the test dataset. PassengerId will also be excluded given its arbitrary nature. Since this is a prediction linear regression model, outliers, leverage, and influence will be overlooked. 
+*For brevity, summaries will be commented out.*
+```{r}
+Pclass <- lm(Age ~ Pclass, data=knownAge)
+#summary(Pclass)
+
+Sex <- lm(Age ~ Sex, data=knownAge)
+#summary(Sex)
+
+Fare <- lm(Age ~ Fare, data=knownAge)
+#summary(Fare)
+
+Sibsp <- lm(Age ~ SibSp, data=knownAge)
+#summary(Sibsp)
+
+Parch <- lm(Age ~ Parch, data=knownAge)
+#summary(Parch)
+
+Title <- lm(Age ~ title, data=knownAge)
+#summary(Title)
+```
+The following variables are identified as significant at alpha=0.05:
+Pclass, Sex, SibSp, Parch, Fare, and Title.
+
+Models will be assessed based on AIC score. While coefficient estimates are not terribly important in prediction modeling, it may still be helpful to note. 
+```{r}
+Age1 <- lm(Age ~ Pclass + Sex + Fare + SibSp + Parch + title, data=knownAge)
+#summary(Age1)
+AIC(Age1)
+```
+The coefficient estimates for Parch and Fare are not significant at alpha=0.05.
+
+```{r}
+Age2 <- lm(Age ~ Pclass + SibSp + title + Sex + Fare, data=knownAge)
+#summary(Age2)
+AIC(Age2)
+```
+All predictor estimates are significant at alpha=0.05.
+
+Perhaps since title and sex indicate the similar information, one or the other could be removed. 
+```{r}
+Age3 <- lm(Age ~ Pclass + SibSp + Fare + Sex, data=knownAge)
+#summary(Age3)
+AIC(Age3)
+```
+All parameter estimates are significant at alpha=0.05. Given the increases AIC, title should be in the model.
+
+```{r}
+Age4 <- lm(Age ~ Pclass + SibSp + Fare+ title, data=knownAge)
+#summary(Age4)
+AIC(Age4)
+```
+AIC increases without Sex in the model. Fare is not significant at alpha=0.05. It would also be beneficial to remove other variables to determine their effect.
+
+```{r}
+Age5 <- lm(Age ~ SibSp + title + Sex + Fare, data=knownAge)
+#summary(Age5)
+AIC(Age5)
+```
+Without Pclass, all predictor estimates are significant at alpha=0.05.
+
+```{r}
+Age6 <- lm(Age ~ Pclass + title + Sex + Fare, data=knownAge)
+#summary(Age6)
+AIC(Age6) 
+```
+Without SibSp, all predictor estimates are significant at alpha=0.01.
+
+```{r}
+Age7 <- lm(Age ~ Pclass + SibSp + title + Sex, data=knownAge)
+#summary(Age7)
+AIC(Age7)
+```
+Without Fare, all predictor estimates are significant at alpha=0.01.
+
+The lowest AIC score belongs to model Age2. Transformations and Interactions could be attempted. Possible transformations can be done on SibSp as it is the only count/integer variable.
+*For brevity, summary calls will be commented out.*
+```{r}
+plot(knownAge$SibSp, residuals(Age5), main="SibSp")
+```
+
+```{r}
+Age8 <- lm(Age ~ Pclass + Sex + I(SibSp^2) + SibSp + title + Fare, data=knownAge)
+#summary(Age8)
+AIC(Age8)
+```
+When squaring SibSp values, all predictor estimates are significant at alpha=0.05, with the exception of Fare.
+
+```{r}
+Age9 <- lm(Age ~ Pclass + Sex + I(sqrt(SibSp)) + SibSp + title + Fare,  data=knownAge)
+#summary(Age9)
+AIC(Age9)
+```
+When taking the square root of SibSp values, all predictor estimates are significant at alpha=0.05, with the exception of SibSp and its transformation.
+
+Interactions could also be reviewed. 
+```{r}
+Age10 <- lm(Age ~ Pclass + Fare + Sex + SibSp*title, data=knownAge)
+#summary(Age10)
+AIC(Age10)
+```
+
+```{r}
+Age11 <- lm(Age ~ Pclass*title + Sex + SibSp + Fare, data=knownAge)
+#summary(Age11)
+AIC(Age11)
+```
+
+```{r}
+Age12 <- lm(Age ~ Pclass + SibSp + Fare + title*Sex, data=knownAge)
+#summary(Age12)
+AIC(Age12)
+```
+
+```{r}
+Age13 <- lm(Age ~ Pclass*Sex + SibSp + title + Fare, data=knownAge)
+#summary(Age13)
+AIC(Age13)
+```
+
+```{r}
+Age14 <- lm(Age ~ Pclass*title + Sex + SibSp*title + Fare, data=knownAge)
+#summary(Age14)
+AIC(Age14)
+```
+
+```{r}
+Age15 <-lm(Age ~ Pclass + Sex + SibSp + title*Fare, data=knownAge)
+#summary(Age15)
+AIC(Age15)
+```
+
+```{r}
+Age16 <-lm(Age ~ Pclass + Sex*Fare + SibSp + title, data=knownAge)
+#summary(Age16)
+AIC(Age16)
+```
+
+```{r}
+Age17 <-lm(Age ~ Pclass*Fare + Sex + SibSp + title, data=knownAge)
+#summary(Age17)
+AIC(Age17)
+```
+
+```{r}
+Age18 <-lm(Age ~ Pclass + Sex + SibSp*Fare + title, data=knownAge)
+#summary(Age18)
+AIC(Age18)
+```
+
+Combining interactions and transformations:
+```{r}
+Age19 <- lm(Age ~ Pclass*title + Sex + I(SibSp^2) + SibSp*title + Fare, data=knownAge)
+#summary(Age19)
+AIC(Age19)
+```
+
+The age prediction model that has the lowest AIC score is model Age10, which includes variables: Pclass, Sex, SibSp, title, Fare and an interaction with SibSp and title.
+
+Cross validation will now be used with model Age10 to determine how similar the predictions are to the summary of the known age values.
+```{r}
+knownAge$pred<-rep(NA, 714)
+for (i in 1:dim(knownAge)[1]){
+  a<-lm(Age ~Pclass + Fare + Sex + SibSp * title,knownAge[-i,])
+  knownAge$pred[i]<-predict(a,knownAge[i,],type="response")
+}
+summary(knownAge$Age)
+summary(knownAge$pred)
+```
+
+The summary indicates that the predicted age values are close to the mean and median of the known ages. However, the negative values must be reviewed.
+```{r}
+length(which(knownAge$pred <= 0))
+```
+3 negative values.
+
+While I will use the model Age10 to predict Age, any resulting negative values will be converted to 0. The predicted values can now be included in the train1 dataset. 
+
+```{r}
+for(i in 1:nrow(train1))
+{
+  if(is.na(train1[i,"Age"]))
+  {
+    train1[i,"Age"] <- predict(Age10, newdata=train1[i,])
+  }
+
+}
+summary(train1$Age)
+summary(train$Age)
+length(which(train1$Age <= 0))
+```
+Since Age cannot be negative, such values will be converted 0. 
+
+```{r}
+train1$Age[train1$Age < 0] <- 0
+summary(train1$Age)
+```
+
+**Logistic Regression** 
+
+With the missing Age values now predicted, logistic regression for survival prediction can begin. The first step is to determine which variables would be considered significant, compared to an intercept-only model.
+
+```{r}
+null_mod <- glm (Survived ~ 1, data= train1, family = binomial())
+Pclass <- glm (Survived ~ Pclass, data= train1, family = binomial())
+anova(null_mod, Pclass, test ="LRT")
+Title <- glm (Survived ~ title, data= train1, family = binomial())
+anova(null_mod, Title, test ="LRT")
+Sex <- glm (Survived ~ Sex, data= train1, family = binomial())
+anova(null_mod, Sex, test ="LRT")
+Age <- glm (Survived ~ Age, data= train1, family = binomial())
+anova(null_mod, Age, test ="LRT")
+SibSp <- glm (Survived ~ SibSp, data= train1, family = binomial())
+anova(null_mod, SibSp, test ="LRT")
+Parch <- glm (Survived ~ Parch, data= train1, family = binomial())
+anova(null_mod, Parch, test ="LRT")
+Ticket <- glm (Survived ~ Ticket, data= train1, family = binomial())
+anova(null_mod, Ticket, test ="LRT")
+Fare <- glm (Survived ~ Fare, data= train1, family = binomial())
+anova(null_mod, Fare, test ="LRT")
+Cabin <- glm (Survived ~ Cabin, data= train1, family = binomial())
+anova(null_mod, Cabin, test ="LRT")
+Embarked <- glm (Survived ~ Embarked, data= train1, family = binomial())
+anova(null_mod, Embarked, test ="LRT")
+```
+
+The Likelihood Ratio Test performed above indicate that the following variables are significant: Pclass, title, Sex, Age, Parch, Ticket, Fare, Cabin, and Embarked. The next step is to fit a logistic regression model with these predictors. Models will be assessed based on AIC score.
+```{r}
+lr1 <-glm(Survived ~ Pclass + title + Sex + Age + Parch + Ticket + Fare + Cabin + Embarked, data= train1, family = binomial())
+```
+This model yielded an error of complete or quasi-complete separation. Since Cabin has a large number of missing values, it could be removed from the model. 
+
+```{r}
+lr2 <-glm(Survived ~ Pclass + title + Sex + Age + Parch + Ticket + Fare + Embarked, data= train1, family = binomial())
+```
+Again, there is a similar warning. I would argue that Ticket should be removed given that this variable has a large number of levels, with little meaning.
+
+```{r}
+lr3 <-glm(Survived ~ Pclass + title + Sex + Age + Parch + Fare + Embarked, data= train1, family = binomial())
+#summary(lr3)
+```
+AIC: 776.15
+
+While SibSp was not considered significant when compared to the null model, it is possible that an interaction could be occurring with Parch, as that would indicate family size.
+```{r}
+lr4 <-glm(Survived ~ Pclass + title + Fare + Sex + Age + Parch*SibSp + Embarked, data= train1, family = binomial())
+#summary(lr4)
+```
+AIC:753.7. There is a significant interaction with Parch and SibSp.
+
+An interaction could also be attempted with Fare, perhaps with passenger class. 
+```{r}
+lr5 <-glm(Survived ~ Pclass*Fare + title + Sex + Age + Parch*SibSp +  Embarked, data= train1, family = binomial())
+#summary(lr5)
+```
+AIC: 755.71
+
+Another interaction that could be attempted is Sex and Pclass.
+```{r}
+lr6 <-glm(Survived ~ Pclass*Sex + title + Age + Parch*SibSp + Fare + Embarked, data= train1, family = binomial())
+#summary(lr6)
+```
+AIC: 735.78
+
+Perhaps there is an interaction with title and Embarked. 
+```{r}
+lr7 <- glm(Survived ~ Pclass*Sex + title*Embarked + Age + Parch*SibSp + Fare, data= train1, family = binomial())
+#summary(lr7)
+```
+AIC: 740.36
+
+Another possibility is interacting Age and Sex.
+```{r}
+lr8 <- glm(Survived ~ Pclass*Sex + title + Embarked + Age*Sex + Fare +  Parch*SibSp, data= train1, family = binomial())
+#summary(lr8)
+```
+AIC: 735.66
+
+Perhaps attempting an interaction with title and Sex. 
+```{r}
+lr9 <- glm(Survived ~ Pclass*Sex + title*Sex + Embarked + Age*Sex + Parch*SibSp + Fare, data= train1, family = binomial())
+#summary(lr9)
+```
+AIC: 735.66. That showed no improvement
+
+Perhaps removing Embarked would help.
+```{r}
+lr10 <- glm(Survived ~ Pclass*Sex + title + Age*Sex + Parch*SibSp + Fare, data= train1, family = binomial())
+#summary(lr10)
+```
+AIC: 732.85
+
+Attempting an interaction with Fare and title. 
+```{r}
+lr11 <- glm(Survived ~ Pclass*Sex + title*Fare + Age*Sex + Parch*SibSp, data= train1, family = binomial())
+#summary(lr11)
+```
+AIC: 738.11. This also does not improve AIC. Perhaps interacting with Age and Sex.  
+
+```{r}
+lr12 <- glm(Survived ~ Pclass*Sex + title + Age*Sex*Fare + Parch*SibSp, data= train1, family = binomial())
+#summary(lr12)
+```
+AIC: 727.59
+
+The models with the lowest AIC scores are: lr12 and lr10.
+
+In order to assess which of these two models best predicts survival, I will use cross validation and from those predicted values, compute a logloss value. A lower logloss value indicates decreased mean squared error which translates into a better predictive model. 
+
+Cross validation and logloss with model lr12.
+```{r}
+train1$pred <- rep(NA, 891)
+for (i in 1:891){
+  a<-glm(Survived ~ Pclass*Sex + title + Age*Sex*Fare + Parch*SibSp, data= train1[-1], family = binomial())
+  train1$pred[i]<-predict(a,train1[i,],type="response")
+}
+
+sum(-(train1$Survived * log(train1$pred) + (1-train1$Survived) * log(1-train1$pred)))
+```
+Logloss:344.7973
+
+Since transformations helped to reduce AIC in the Age model, perhaps that could be attempted again. The only integer variables in the model are SibSp and Parch.
+```{r}
+lr13 <- glm(Survived ~ Pclass*Sex + title + Age*Sex*Fare + Parch*SibSp + I(Parch^2), data= train1, family = binomial())
+#summary(lr13)
+```
+AIC: 729.53
+
+```{r}
+lr14 <- glm(Survived ~ Pclass*Sex + title + Age*Sex*Fare + Parch*SibSp + I(SibSp^2), data= train1, family = binomial())
+#summary(lr14)
+```
+AIC: 725.19
+
+Squaring SibSp yielded a lower AIC score, thus this model will be used in the following cross validation process.
+```{r}
+train1$pred <- rep(NA, 891)
+for (i in 1:891){
+  a<-glm(Survived ~ Pclass*Sex + title + Age*Sex*Fare + Parch*SibSp + I(SibSp^2), data= train1[-1], family = binomial())
+  train1$pred[i]<-predict(a,train1[i,],type="response")
+}
+
+sum(-(train1$Survived * log(train1$pred) + (1-train1$Survived) * log(1-train1$pred)))
+```
+With a logloss value of 342.5975, the Titanic survival prediction model I present is:
+$$ \hat{y_{i}} = \hat{\beta_{0}} + \hat{\beta_{1}}SibSp + \hat{\beta_{2}}Sex + \hat{\beta_{3}}Fare + \hat{\beta_{4}}Age + \hat{\beta_{5}}title + \hat{\beta_{6}}Parch + \hat{\beta_{7}}(Pclass)(Sex)  + \hat{\beta_{8}}(Age)(Sex)(Fare) + \hat{\beta_{9}}Parch(SibSp) + \hat{\beta_{10}}SibSp^2$$
+*yi(hat) represents the survival predictions.*
+
+
+**Prepare Test Dataset**
+
+Finally, the test dataset has to be reclassified to reflect the training set. 
+```{r}
+str(test)
+summary(test)
+```
+Pclass should be changed to a factor, there are 0 values for fare as well as a missing value, and the missing age values need to be predicted with the Age model created previously.
+
+Set Pclass as factor:
+```{r}
+test$Pclass <- as.factor(test$Pclass)
+```
+
+Creating Title:
+```{r}
+test$title <- str_sub(test$Name, str_locate(test$Name, ",")[ , 1] + 2, str_locate(test$Name, "\\.")[ , 1] - 1)
+table(test$title)
+noble <- c("Capt", "Col", "Don","Dona", "Dr", "Jonkheer", "Major", "Rev", "Sir", "Lady", "Mlle", "Mme", "the Countess")
+test$title[test$title %in% noble] <- "noble"
+Ms<- c("Ms", "Miss")
+test$title[test$title %in% Ms] <- "Miss"
+test$title <- as.factor(test$title)
+```
+
+Replacing 0 and NA Fare values with median based on passenger class.
+```{r}
+summary(test$Fare)
+aggregate(Fare~Pclass,test,median)
+test$Fare <- ifelse( (round(test$Fare==0) & as.numeric(test$Pclass)==1),60,
+                    ifelse( (round(test$Fare==0) & as.numeric(test$Pclass)==2),15.75,
+                            ifelse( (round(test$Fare==0) & as.numeric(test$Pclass)==3),7.8958,test$Fare)))
+subset(test, is.na(test$Fare)) 
+test$Fare <- ifelse(is.na(test$Fare), 7.8958, test$Fare)
+summary(test$Fare)
+```
+
+Predicting Age:
+```{r}
+testAge <- lm(Age ~ Pclass + Fare + Sex + SibSp*title, data=test)
+summary(test$Age)
+
+for(i in 1:nrow(test))
+{
+  if(is.na(test[i,"Age"]))
+  {
+    test[i,"Age"] <- predict(testAge, newdata=test[i,])
+  }
+
+}
+summary(test$Age)
+```
+
+With that complete, the final step is to load the predicted Survived column to the test dataset. 
+```{r}
+test$Survived <- 0
+
+final_model <- glm(Survived ~ Pclass*Sex + title + Age*Sex*Fare + Parch*SibSp + I(SibSp^2), data=train1, family = binomial())
+
+test$Survived <- predict(final_model, newdata=test, type="response")
+test$Survived[test$Survived > 0.5] <-1
+test$Survived[test$Survived !=1] <- 0
+```
+
+Submission to Kaggle
+```{r}
+submit <- data.frame(PassengerId = test$PassengerId, Survived = test$Survived)
+write.csv(submit, file = "TitanicDec2015.csv", row.names = FALSE)
+```
+Kaggle score of 0.789
+
+
+`````````````````````````````````````````````````````````````````````````
+
+It should be noted that the second regression model lr12, that had a logloss value of 344.7973, yielded a higher Kaggle score of 0.794 (see below). However, since logloss is arguably a more accurate measurement of prediction models, my final model is lr14, which has the lower logloss value. 
+
+```{r}
+test$Survived <- 0
+
+final_model1 <- glm(Survived ~ Pclass*Sex + title + Age*Sex*Fare + Parch*SibSp, data=train1, family = binomial())
+
+test$Survived <- predict(final_model1, newdata=test, type="response")
+test$Survived[test$Survived > 0.5] <-1
+test$Survived[test$Survived !=1] <- 0
+```
+
+Submission to Kaggle
+```{r}
+submit <- data.frame(PassengerId = test$PassengerId, Survived = test$Survived)
+write.csv(submit, file = "Titanic2Dec2015.csv", row.names = FALSE)
+```
+Kaggle score of 0.794
